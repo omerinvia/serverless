@@ -175,6 +175,184 @@ describe('lib/plugins/aws/package/compile/events/httpApi.test.js', () => {
     });
   });
 
+  describe('Provider properties with custom domains', () => {
+    let cfCustomDomainApiMapping;
+    let cfCustomDomainRecordSet;
+    let otherDomainApi;
+    let otherDomainRecordSet;
+    let naming;
+
+    before(() =>
+      runServerless({
+        fixture: 'httpApi',
+        configExt: {
+          provider: {
+            httpApi: {
+              name: 'TestHttpApi',
+              payload: '1.0',
+              cors: true,
+              metrics: true,
+              disableDefaultEndpoint: true,
+              customDomains: {
+                domainA: {
+                  path: 'path.to.custom.domain',
+                  hostedZoneName: 'to.custom.domain',
+                  sslCertificateArn:
+                    'arn:aws:acm:us-east-1:123456789:certificate/aaaa-aaaa-aaaa-aaaa-aaaa',
+                },
+                domainB: {
+                  path: 'path.to.other.domain',
+                  hostedZoneName: 'to.other.domain',
+                  sslCertificateArn:
+                    'arn:aws:acm:us-east-1:123456789:certificate/aaaa-aaaa-aaaa-aaaa-aaaa',
+                },
+              },
+              useProviderTags: true,
+            },
+            logs: {
+              httpApi: true,
+            },
+            tags: {
+              'providerTagA': 'providerTagAValue',
+              'providerTagB': 'providerTagBValue',
+              'provider:tagC': 'providerTagCValue',
+              'provider:tag-D': 'providerTagDValue',
+            },
+          },
+          functions: {
+            authorized: {
+              handler: 'index.handler',
+              events: [
+                {
+                  httpApi: {
+                    method: 'GET',
+                    path: '/authorized',
+                  },
+                },
+              ],
+            },
+          },
+        },
+        command: 'package',
+      }).then(({ awsNaming, cfTemplate }) => {
+        const { Resources } = cfTemplate;
+        cfCustomDomainApiMapping = Resources[awsNaming.getHttpApiApiMappingLogicalId('domainA')];
+        cfCustomDomainRecordSet = Resources[awsNaming.getHttpApiRecordSetLogicalId('domainA')];
+        otherDomainApi = Resources[awsNaming.getHttpApiApiMappingLogicalId('domainB')];
+        otherDomainRecordSet = Resources[awsNaming.getHttpApiRecordSetLogicalId('domainB')];
+        naming = awsNaming;
+      })
+    );
+
+    it('custom domains: should create api mapping, domain name, and record set', () => {
+      expect(cfCustomDomainApiMapping.Properties.ApiId.Ref).to.equal(naming.getHttpApiLogicalId());
+    });
+
+    it('custom domains: verify that we are using the right paths', () => {
+      expect(cfCustomDomainRecordSet.Properties.Name).to.equal('path.to.custom.domain');
+    });
+    it('custom domains: verify that both domains exists', () => {
+      expect(otherDomainRecordSet.Properties.Name).to.not.equal(
+        cfCustomDomainRecordSet.Properties.Name
+      );
+    });
+    it('custom domains: verify that second domain created', () => {
+      expect(otherDomainApi).to.not.equal(null);
+      expect(otherDomainRecordSet).to.not.equal(null);
+    });
+    it('custom domains: verify that tags were created', () => {
+      expect(otherDomainApi.Properties.Tags).to.not.equal({});
+      expect(otherDomainApi.Properties.Tags).to.not.equal(null);
+      expect(otherDomainApi.Properties.Tags.providerTagA).to.equal('providerTagAValue');
+    });
+  });
+
+  describe('custom domains: malformed params', () => {
+    it('custom domains: test malformed httpApi, without path', async () => {
+      await expect(
+        runServerless({
+          fixture: 'httpApi',
+          configExt: {
+            provider: {
+              httpApi: {
+                name: 'TestHttpApi',
+                customDomains: {
+                  domainA: {
+                    hostedZoneName: 'to.custom.domain',
+                    sslCertificateArn:
+                      'arn:aws:acm:us-east-1:123456789:certificate/aaaa-aaaa-aaaa-aaaa-aaaa',
+                  },
+                },
+              },
+            },
+            functions: {
+              authorized: {
+                handler: 'index.handler',
+                events: [
+                  {
+                    httpApi: {
+                      method: 'GET',
+                      path: '/authorized',
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          command: 'package',
+        })
+      ).to.eventually.be.rejected.and.have.property(
+        'code',
+        'INVALID_NON_SCHEMA_COMPLIANT_CONFIGURATION'
+      );
+    });
+
+    it('custom domains: test malformed httpApi, without hosted zone name', async () => {
+      await expect(
+        runServerless({
+          fixture: 'httpApi',
+          configExt: {
+            provider: {
+              httpApi: {
+                name: 'TestHttpApi',
+                customDomains: {
+                  domainA: {
+                    path: 'tes.to.custom.domain',
+                    sslCertificateArn:
+                      'arn:aws:acm:us-east-1:123456789:certificate/aaaa-aaaa-aaaa-aaaa-aaaa',
+                  },
+                  domainB: {
+                    hostedZoneName: 'hosted.zoe',
+                    path: 'tes.to.custom.domain',
+                    sslCertificateArn:
+                      'arn:aws:acm:us-east-1:123456789:certificate/aaaa-aaaa-aaaa-aaaa-aaaa',
+                  },
+                },
+              },
+            },
+            functions: {
+              authorized: {
+                handler: 'index.handler',
+                events: [
+                  {
+                    httpApi: {
+                      method: 'GET',
+                      path: '/authorized',
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          command: 'package',
+        })
+      ).to.eventually.be.rejected.and.have.property(
+        'code',
+        'INVALID_NON_SCHEMA_COMPLIANT_CONFIGURATION'
+      );
+    });
+  });
+
   describe('Provider properties', () => {
     let cfApi;
     let cfStage;
